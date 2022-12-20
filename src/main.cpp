@@ -28,21 +28,26 @@ public:
     InterElim(int _m, array<int, 2> *_E, GRBVar *_X, GRBVar *_Y) : m(_m), X(_X), Y(_Y), E(_E) {}
 
 protected:
-    bool itersect(int e, int f) const {
-        double a[2] = {X[E[e][0]].get(GRB_DoubleAttr_Obj), Y[E[e][0]].get(GRB_DoubleAttr_Obj)},
-               b[2] = {X[E[e][1]].get(GRB_DoubleAttr_Obj), Y[E[e][1]].get(GRB_DoubleAttr_Obj)},
-               c[2] = {X[E[f][0]].get(GRB_DoubleAttr_Obj), Y[E[f][0]].get(GRB_DoubleAttr_Obj)},
-               d[2] = {X[E[f][1]].get(GRB_DoubleAttr_Obj), Y[E[f][1]].get(GRB_DoubleAttr_Obj)};
-
-        if (side(a, c, d) == side(b, c, d) || side(a, b, c) == side(a, b, d)) return false;
-        return true;
-    }
-
     void callback() override {
         try {
-            if (where == GRB_CB_MIPSOL) {
-                // Found an integer feasible solution - does it have no edge intersection?
-            }
+            // Check if all the model variables are integer:
+            if (where != GRB_CB_MIPSOL) return;// as this code do not take advantage of the other options
+
+            // Found an integer feasible solution - does it have no edge intersection?
+            bool itersect;
+            for (int e = 0; e < m; e++)
+                for (int f = e + 1; f < m; f++) {
+                    double a[2] = {getSolution(X[E[e][0]]), getSolution(Y[E[e][0]])},
+                           b[2] = {getSolution(X[E[e][1]]), getSolution(Y[E[e][1]])},
+                           c[2] = {getSolution(X[E[f][0]]), getSolution(Y[E[f][0]])},
+                           d[2] = {getSolution(X[E[f][1]]), getSolution(Y[E[f][1]])};
+
+                    itersect = !(side(a, c, d) == side(b, c, d) || side(a, b, c) == side(a, b, d));
+
+                    if (itersect)
+                        cout << E[e][0] + 1 << "-" << E[e][1] + 1 << " intersects with " << E[f][0] + 1 << "-"
+                             << E[f][1] + 1 << endl;
+                }
         } catch (GRBException &e) {
             cout << "Error number: " << e.getErrorCode() << endl;
             cout << e.getMessage() << endl;
@@ -89,7 +94,7 @@ void method() {
         model.set(GRB_IntParam_NonConvex, 2);
 
         // Must set LazyConstraints parameter when using lazy constraints:
-        model.set(GRB_IntParam_LazyConstraints, 0);
+        model.set(GRB_IntParam_LazyConstraints, 1);
 
         // Set callback function:
         InterElim cb = InterElim(m, E, X, Y);
@@ -135,21 +140,6 @@ void method() {
         cout << "- Width " << width.get(GRB_DoubleAttr_X) << endl;
         cout << "- Height " << height.get(GRB_DoubleAttr_X) << endl;
         cout << "- Area Cost " << model.getObjective().getValue() << endl;
-
-        bool itersect;
-        for (int e = 0; e < m; e++)
-            for (int f = e + 1; f < m; f++) {
-                double a[2] = {X[E[e][0]].get(GRB_DoubleAttr_X), Y[E[e][0]].get(GRB_DoubleAttr_X)},
-                       b[2] = {X[E[e][1]].get(GRB_DoubleAttr_X), Y[E[e][1]].get(GRB_DoubleAttr_X)},
-                       c[2] = {X[E[f][0]].get(GRB_DoubleAttr_X), Y[E[f][0]].get(GRB_DoubleAttr_X)},
-                       d[2] = {X[E[f][1]].get(GRB_DoubleAttr_X), Y[E[f][1]].get(GRB_DoubleAttr_X)};
-
-                itersect = !(side(a, c, d) == side(b, c, d) || side(a, b, c) == side(a, b, d));
-
-                if (itersect)
-                    cout << E[e][0] + 1 << "-" << E[e][1] + 1 << " intersects with " << E[f][0] + 1 << "-"
-                         << E[f][1] + 1 << endl;
-            }
     } catch (GRBException &e) {
         cout << "Error number: " << e.getErrorCode() << endl;
         cout << e.getMessage() << endl;
