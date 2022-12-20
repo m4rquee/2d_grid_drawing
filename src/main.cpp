@@ -77,11 +77,7 @@ void method() {
     auto X = new GRBVar[n], Y = new GRBVar[n];// coordinate for each vertex
     GRBVar width, height;                     // dimensions of the drawing
 
-    auto XorYdiff = new GRBVar *[n];// if the [u][v] vertices coordinates differ in X or Y
-    auto Xu_gt_Xv = new GRBVar *[n];// given that u differs from v in the X coordinate, then Xu < Xv?
-    auto Yu_gt_Yv = new GRBVar *[n];// given that u differs from v in the Y coordinate, then Yu < Yv?
-
-    int M = (int) pow(n, 3);// a huge number
+    int M = (int) pow(n, 2);// a huge number
     double time_limit = 180;// 3 min
     try {
         auto *env = new GRBEnv();
@@ -112,14 +108,6 @@ void method() {
             X[i] = model.addVar(0.0, M, 0.0, GRB_INTEGER, "x_" + itos(i));
             Y[i] = model.addVar(0.0, M, 0.0, GRB_INTEGER, "y_" + itos(i));
         }
-        for (int i = 0; i < n; i++) {
-            XorYdiff[i] = new GRBVar[n], Xu_gt_Xv[i] = new GRBVar[n], Yu_gt_Yv[i] = new GRBVar[n];
-            for (int j = i + 1; j < n; j++) {
-                XorYdiff[i][j] = model.addVar(0.0, 1.0, 0.0, GRB_BINARY, "x_or_y_diff_" + itos(i) + itos(j));
-                Xu_gt_Xv[i][j] = model.addVar(0.0, 1.0, 0.0, GRB_BINARY, "xu_less_xv_" + itos(i) + itos(j));
-                Yu_gt_Yv[i][j] = model.addVar(0.0, 1.0, 0.0, GRB_BINARY, "yu_less_yv_" + itos(i) + itos(j));
-            }
-        }
         model.update();// run update to use model inserted variables
 
         // Constraint creation: ___________________________________________________________________
@@ -131,15 +119,10 @@ void method() {
             model.addConstr(Y[i] <= height, "y_limit_" + itos(i));
         }
 
-        // All coordiates must be different from each other:
+        // All coordinates must be different from each other:
         for (int u = 0; u < n; u++)
-            for (int v = u + 1; v < n; v++) {
-                model.addConstr(X[u] - X[v] <= XorYdiff[u][v] * M + Xu_gt_Xv[u][v] * M - 1);
-                model.addConstr(X[u] - X[v] >= -XorYdiff[u][v] * M + (Xu_gt_Xv[u][v] - 1) * M + 1);
-
-                model.addConstr(Y[u] - Y[v] <= (1 - XorYdiff[u][v]) * M + Yu_gt_Yv[u][v] * M - 1);
-                model.addConstr(Y[u] - Y[v] >= -(1 - XorYdiff[u][v]) * M + (Yu_gt_Yv[u][v] - 1) * M + 1);
-            }
+            for (int v = u + 1; v < n; v++)
+                model.addQConstr((X[u] - X[v]) * (X[u] - X[v]) + (Y[u] - Y[v]) * (Y[u] - Y[v]) >= 1);
 
         model.update();// run update before optimize
         model.optimize();
@@ -171,16 +154,8 @@ void method() {
         cout << "Error number: " << e.getErrorCode() << endl;
         cout << e.getMessage() << endl;
     } catch (...) { cout << "Error during callback" << endl; }
-    for (int i = 0; i < n; i++) {
-        delete[] XorYdiff[i];
-        delete[] Xu_gt_Xv[i];
-        delete[] Yu_gt_Yv[i];
-    }
     delete[] X;
     delete[] Y;
-    delete[] XorYdiff;
-    delete[] Xu_gt_Xv;
-    delete[] Yu_gt_Yv;
 }
 
 int main() {
