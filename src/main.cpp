@@ -140,6 +140,7 @@ void method() {
 
         // Constraint creation: ___________________________________________________________________
         model.addConstr(height <= width, "lied_down_box");
+        model.addQConstr((height + 1) * (width + 1) >= n, "minimum_area");
 
         // All coordinates must be withing the bounding box:
         for (int i = 0; i < n; i++) {
@@ -214,7 +215,11 @@ void method() {
                 model.addQConstr((1 - vtx_side[di][e]) * cross_prods[di][e] <= 0, "2_" + name);
                 model.addQConstr(vtx_side[di][e] <= M * cross_prods[di][e] * cross_prods[di][e], "3_" + name);
 
-                // bool not_itersect = side(a, c, d) == side(b, c, d) || side(a, b, c) == side(a, b, d);
+                // Make sure there is no crossing between the edges:
+                // side(a, c, d) == side(b, c, d) || side(a, b, c) == side(a, b, d):
+                auto eq1 = (vtx_side[ai][f] - vtx_side[bi][f]) * (vtx_side[ai][f] - vtx_side[bi][f]),
+                     eq2 = (vtx_side[ci][e] - vtx_side[di][e]) * (vtx_side[ci][e] - vtx_side[di][e]);
+                model.addQConstr(eq1 + eq2 <= 3, "no_int_" + itos(e) + "_" + itos(f));
             }
 
         // Edges from being entirely contained inside another one:
