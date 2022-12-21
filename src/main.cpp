@@ -7,15 +7,14 @@ using namespace std;
 const double EPS = 1E-1;
 const long unsigned SEED = 42;// the random number generator seed
 
-inline bool side(double p[2], const double u[2], double v[2]) {
-    // Calculates the vector from u to v:
-    v[0] -= u[0];
-    v[1] -= u[1];
-    // Calculates the vector from u to p:
-    p[0] -= u[0];
-    p[1] -= u[1];
-    auto cross_prod = v[0] * p[1] - v[1] * p[0];
-    return cross_prod >= 0;
+#define getISolution(v) ((int) getSolution(v))
+
+inline char side(const int p[2], const int u[2], const int v[2]) {
+    // Calculates the vector from u to v and from u to p:
+    int uv_0 = v[0] - u[0], uv_1 = v[1] - u[1];
+    int up_0 = p[0] - u[0], up_1 = p[1] - u[1];
+    auto cross_prod = uv_0 * up_1 - uv_1 * up_0;
+    return (0 < cross_prod) - (cross_prod < 0);
 }
 
 // Intersection elimination callback. Whenever a feasible solution is found,
@@ -25,10 +24,9 @@ class IntersectElim : public GRBCallback {
 public:
     int m;
     array<int, 2> *E;
-    GRBVar *X, *Y, *edge_len;
+    GRBVar *X, *Y;
 
-    IntersectElim(int _m, array<int, 2> *_E, GRBVar *_X, GRBVar *_Y, GRBVar *_edge_len)
-        : m(_m), E(_E), X(_X), Y(_Y), edge_len(_edge_len) {}
+    IntersectElim(int _m, array<int, 2> *_E, GRBVar *_X, GRBVar *_Y) : m(_m), E(_E), X(_X), Y(_Y) {}
 
 protected:
     void callback() override {
@@ -37,21 +35,19 @@ protected:
             if (where != GRB_CB_MIPSOL) return;// as this code do not take advantage of the other options
 
             // Found an integer feasible solution - does it have an edge intersection?
-
-            return;
-            bool itersect;
             for (int e = 0; e < m; e++)
                 for (int f = e + 1; f < m; f++) {
-                    double a[2] = {getSolution(X[E[e][0]]), getSolution(Y[E[e][0]])},
-                           b[2] = {getSolution(X[E[e][1]]), getSolution(Y[E[e][1]])},
-                           c[2] = {getSolution(X[E[f][0]]), getSolution(Y[E[f][0]])},
-                           d[2] = {getSolution(X[E[f][1]]), getSolution(Y[E[f][1]])};
+                    int ai = E[e][0], bi = E[e][1], ci = E[f][0], di = E[f][1];
+                    if (ai == ci || ai == di || bi == ci || bi == di) continue;// they share an endpoint
 
-                    itersect = !(side(a, c, d) == side(b, c, d) || side(a, b, c) == side(a, b, d));
+                    int a[2] = {getISolution(X[ai]), getISolution(Y[ai])},
+                        b[2] = {getISolution(X[bi]), getISolution(Y[bi])},
+                        c[2] = {getISolution(X[ci]), getISolution(Y[ci])},
+                        d[2] = {getISolution(X[di]), getISolution(Y[di])};
 
-                    if (itersect)
-                        cout << E[e][0] + 1 << "-" << E[e][1] + 1 << " intersects with " << E[f][0] + 1 << "-"
-                             << E[f][1] + 1 << endl;
+                    bool not_itersect = side(a, c, d) == side(b, c, d) || side(a, b, c) == side(a, b, d);
+                    if (not_itersect) continue;
+                    cout << ai + 1 << "-" << bi + 1 << " intersects with " << ci + 1 << "-" << di + 1 << endl;
                 }
         } catch (GRBException &e) {
             cout << "Error number: " << e.getErrorCode() << endl;
@@ -104,7 +100,7 @@ void method() {
         // model.set(GRB_IntParam_LazyConstraints, 1);
 
         // Set callback function:
-        // IntersectElim cb = IntersectElim(m, E, X, Y, edge_len);
+        // IntersectElim cb = IntersectElim(m, E, X, Y);
         // model.setCallback(&cb);
 
         // Focus primarily on feasibility of the relaxation:
