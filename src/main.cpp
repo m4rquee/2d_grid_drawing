@@ -17,6 +17,13 @@ inline char side(const int p[2], const int u[2], const int v[2]) {
     return (0 < cross_prod) - (cross_prod < 0);
 }
 
+inline auto cross_prod(const GRBVar p[2], const GRBVar u[2], const GRBVar v[2]) {
+    // Calculates the vector from u to v and from u to p:
+    auto uv_0 = v[0] - u[0], uv_1 = v[1] - u[1];
+    auto up_0 = p[0] - u[0], up_1 = p[1] - u[1];
+    return uv_0 * up_1 - uv_1 * up_0;
+}
+
 // Intersection elimination callback. Whenever a feasible solution is found,
 // find the edges intersections, and add an intersection elimination constraint
 // if some edges intersect.
@@ -83,6 +90,12 @@ void method() {
     auto X = new GRBVar[n], Y = new GRBVar[n];// coordinate for each vertex
     GRBVar width, height;                     // dimensions of the drawing
     auto edge_len = new GRBVar[m];
+    auto cross_prods = new GRBVar *[n];
+    auto vtx_side = new GRBVar *[n];
+    for (int i = 0; i < n; i++) {
+        cross_prods[i] = new GRBVar[m];
+        vtx_side[i] = new GRBVar[m];
+    }
 
     int M = (int) pow(n, 2);// a huge number
     double time_limit = 180;// 3 min
@@ -115,9 +128,14 @@ void method() {
         for (int i = 0; i < n; i++) {
             X[i] = model.addVar(0.0, M, 0.0, GRB_INTEGER, "x_" + itos(i));
             Y[i] = model.addVar(0.0, M, 0.0, GRB_INTEGER, "y_" + itos(i));
+
+            for (int e = 0; e < m; e++) {
+                cross_prods[i][e] = model.addVar(-M, M, 0.0, GRB_CONTINUOUS, "cp_" + itos(i) + "_" + itos(e));
+                vtx_side[i][e] = model.addVar(-1.0, 1.0, 0.0, GRB_INTEGER, "vs_" + itos(i) + "_" + itos(e));
+            }
         }
         for (int e = 0; e < m; e++)
-            edge_len[e] = model.addVar(1.0, sqrt(2 * M * M), 0.0, GRB_CONTINUOUS, "el_" + itos(e));
+            edge_len[e] = model.addVar(1.0, ceil(sqrt(2) * M), 0.0, GRB_CONTINUOUS, "el_" + itos(e));
         model.update();// run update to use model inserted variables
 
         // Constraint creation: ___________________________________________________________________
@@ -156,6 +174,51 @@ void method() {
                 }
         }
 
+        // Prohibit intersections between edges with no common endpoint:
+        for (int e = 0; e < m; e++)
+            for (int f = e + 1; f < m; f++) {
+                int ai = E[e][0], bi = E[e][1], ci = E[f][0], di = E[f][1];
+                if (ai > bi && ci > di) continue;  // avoid double-checking
+                if (ai == ci || bi == di) continue;// they share an endpoint
+
+                GRBVar a[2] = {X[ai], Y[ai]}, b[2] = {X[bi], Y[bi]}, c[2] = {X[ci], Y[ci]},
+                       d[2] = {X[di], Y[di]};
+
+                auto afCross = cross_prod(a, c, d), bfCross = cross_prod(b, c, d),
+                     ceCross = cross_prod(c, a, b), deCross = cross_prod(d, a, b);
+
+                // Relate the coordinates with the edges' cross products:
+                model.addQConstr(cross_prods[ai][f] == afCross);
+                model.addQConstr(cross_prods[bi][f] == bfCross);
+                model.addQConstr(cross_prods[ci][e] == ceCross);
+                model.addQConstr(cross_prods[di][e] == deCross);
+
+                // Relate the cross products with the side indicator variables:
+                auto name = "side_" + itos(ai) + "_" + itos(f);
+                model.addQConstr(vtx_side[ai][f] * cross_prods[ai][f] >= 0, "1_" + name);
+                model.addQConstr((1 - vtx_side[ai][f]) * cross_prods[ai][f] <= 0, "2_" + name);
+                model.addQConstr(vtx_side[ai][f] <= M * cross_prods[ai][f] * cross_prods[ai][f], "3_" + name);
+
+                name = "side_" + itos(bi) + "_" + itos(f);
+                model.addQConstr(vtx_side[bi][f] * cross_prods[bi][f] >= 0, "1_" + name);
+                model.addQConstr((1 - vtx_side[bi][f]) * cross_prods[bi][f] <= 0, "2_" + name);
+                model.addQConstr(vtx_side[bi][f] <= M * cross_prods[bi][f] * cross_prods[bi][f], "3_" + name);
+
+                name = "side_" + itos(ci) + "_" + itos(e);
+                model.addQConstr(vtx_side[ci][e] * cross_prods[ci][e] >= 0, "1_" + name);
+                model.addQConstr((1 - vtx_side[ci][e]) * cross_prods[ci][e] <= 0, "2_" + name);
+                model.addQConstr(vtx_side[ci][e] <= M * cross_prods[ci][e] * cross_prods[ci][e], "3_" + name);
+
+                name = "side_" + itos(di) + "_" + itos(e);
+                model.addQConstr(vtx_side[di][e] * cross_prods[di][e] >= 0, "1_" + name);
+                model.addQConstr((1 - vtx_side[di][e]) * cross_prods[di][e] <= 0, "2_" + name);
+                model.addQConstr(vtx_side[di][e] <= M * cross_prods[di][e] * cross_prods[di][e], "3_" + name);
+
+                // bool not_itersect = side(a, c, d) == side(b, c, d) || side(a, b, c) == side(a, b, d);
+            }
+
+        // Edges from being entirely contained inside another one:
+
         model.update();// run update before optimize
         model.optimize();
         if (model.get(GRB_IntAttr_SolCount) == 0) throw GRBException("Could not obtain a solution!", -1);
@@ -174,8 +237,14 @@ void method() {
         cout << "Error number: " << e.getErrorCode() << endl;
         cout << e.getMessage() << endl;
     } catch (...) { cout << "Error during callback" << endl; }
+
     delete[] X;
     delete[] Y;
+    delete[] edge_len;
+    for (int i = 0; i < n; i++) delete[] cross_prods[i];
+    delete[] cross_prods;
+    for (int i = 0; i < n; i++) delete[] vtx_side[i];
+    delete[] vtx_side;
 }
 
 int main() {
