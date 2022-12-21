@@ -4,6 +4,8 @@
 #include <sstream>
 
 using namespace std;
+const double EPS = 1E-1;
+const long unsigned SEED = 42;// the random number generator seed
 
 inline bool side(double p[2], const double u[2], double v[2]) {
     // Calculates the vector from u to v:
@@ -19,14 +21,14 @@ inline bool side(double p[2], const double u[2], double v[2]) {
 // Intersection elimination callback. Whenever a feasible solution is found,
 // find the edges intersections, and add an intersection elimination constraint
 // if some edges intersect.
-class InterElim : public GRBCallback {
+class IntersectElim : public GRBCallback {
 public:
     int m;
-    GRBVar *X, *Y;
     array<int, 2> *E;
-    const double EPS = 1E-1;
+    GRBVar *X, *Y, *edge_len;
 
-    InterElim(int _m, array<int, 2> *_E, GRBVar *_X, GRBVar *_Y) : m(_m), X(_X), Y(_Y), E(_E) {}
+    IntersectElim(int _m, array<int, 2> *_E, GRBVar *_X, GRBVar *_Y, GRBVar *_edge_len)
+        : m(_m), E(_E), X(_X), Y(_Y), edge_len(_edge_len) {}
 
 protected:
     void callback() override {
@@ -34,25 +36,7 @@ protected:
             // Check if all the model variables are integer:
             if (where != GRB_CB_MIPSOL) return;// as this code do not take advantage of the other options
 
-            // Found an integer feasible solution - does it have no edge intersection?
-
-            // Check for intersections between edges of a node's neighborhood:
-            for (int e = 0, degree; e < m; e += degree) {
-                int curr_node = E[e][0];
-                double u[2] = {getSolution(X[E[e][0]]), getSolution(Y[E[e][0]])};// edges origin
-                for (degree = 0; degree + e < m && E[degree + e][0] == curr_node; degree++) {}
-
-                for (int vi = e; vi < degree + e; vi++)
-                    for (int wi = vi + 1; wi < degree + e; wi++) {
-                        double v[2] = {getSolution(X[E[vi][1]]) - u[0], getSolution(Y[E[vi][1]]) - u[1]},
-                               w[2] = {getSolution(X[E[wi][1]]) - u[0], getSolution(Y[E[wi][1]]) - u[1]};
-                        double v_norm2 = v[0] * v[0] + v[1] * v[1], w_norm2 = w[0] * w[0] + w[1] * w[1];
-                        double cos = (v[0] * w[0] + v[1] * w[1]) / sqrt(v_norm2 * w_norm2);
-                        if (cos > 1 - EPS) {// the vectors are collinear
-                            // Ensure that they are not collinear (i.e., v.w*cos < |v||w|):
-                        }
-                    }
-            }
+            // Found an integer feasible solution - does it have an edge intersection?
 
             return;
             bool itersect;
@@ -108,6 +92,7 @@ void method() {
     double time_limit = 180;// 3 min
     try {
         auto *env = new GRBEnv();
+        env->set(GRB_IntParam_Seed, SEED);
         env->set(GRB_DoubleParam_TimeLimit, time_limit);
 
         GRBModel model = GRBModel(*env);
@@ -116,11 +101,11 @@ void method() {
         model.set(GRB_IntParam_NonConvex, 2);
 
         // Must set LazyConstraints parameter when using lazy constraints:
-        model.set(GRB_IntParam_LazyConstraints, 1);
+        // model.set(GRB_IntParam_LazyConstraints, 1);
 
         // Set callback function:
-        InterElim cb = InterElim(m, E, X, Y);
-        model.setCallback(&cb);
+        // IntersectElim cb = IntersectElim(m, E, X, Y, edge_len);
+        // model.setCallback(&cb);
 
         // Focus primarily on feasibility of the relaxation:
         // model.set(GRB_IntParam_MIPFocus, GRB_MIPFOCUS_FEASIBILITY);
@@ -158,6 +143,21 @@ void method() {
             int u = E[e][0], v = E[e][1];
             GRBQuadExpr edge_len2 = (X[u] - X[v]) * (X[u] - X[v]) + (Y[u] - Y[v]) * (Y[u] - Y[v]);
             model.addQConstr(edge_len[e] * edge_len[e] == edge_len2);
+        }
+
+        // Prohibit intersections between edges with a common endpoint:
+        for (int e = 0, e_final; e < m; e = e_final) {
+            auto U_x = X[E[e][0]], U_y = Y[E[e][0]];
+            for (e_final = e; e_final < m && E[e_final][0] == E[e][0]; e_final++) {}
+
+            for (int vi = e; vi < e_final; vi++)
+                for (int wi = vi + 1; wi < e_final; wi++) {
+                    auto V_x = X[E[vi][1]], V_y = Y[E[vi][1]], W_x = X[E[wi][1]], W_y = Y[E[wi][1]];
+                    // Ensure that they are not collinear (i.e., cos = v.w/(|v||w|) < 1):
+                    auto dot_prod = (V_x - U_x) * (W_x - U_x) + (V_y - U_y) * (W_y - U_y);
+                    auto name = "int_" + itos(vi) + "_" + itos(wi);
+                    model.addQConstr(dot_prod <= edge_len[vi] * edge_len[wi] - EPS, name);
+                }
         }
 
         model.update();// run update before optimize
