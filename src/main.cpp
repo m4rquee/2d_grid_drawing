@@ -24,6 +24,7 @@ public:
     int m;
     GRBVar *X, *Y;
     array<int, 2> *E;
+    const double EPS = 1E-1;
 
     InterElim(int _m, array<int, 2> *_E, GRBVar *_X, GRBVar *_Y) : m(_m), X(_X), Y(_Y), E(_E) {}
 
@@ -34,6 +35,26 @@ protected:
             if (where != GRB_CB_MIPSOL) return;// as this code do not take advantage of the other options
 
             // Found an integer feasible solution - does it have no edge intersection?
+
+            // Check for intersections between edges of a node's neighborhood:
+            for (int e = 0, degree; e < m; e += degree) {
+                int curr_node = E[e][0];
+                double u[2] = {getSolution(X[E[e][0]]), getSolution(Y[E[e][0]])};// edges origin
+                for (degree = 0; degree + e < m && E[degree + e][0] == curr_node; degree++) {}
+
+                for (int vi = e; vi < degree + e; vi++)
+                    for (int wi = vi + 1; wi < degree + e; wi++) {
+                        double v[2] = {getSolution(X[E[vi][1]]) - u[0], getSolution(Y[E[vi][1]]) - u[1]},
+                               w[2] = {getSolution(X[E[wi][1]]) - u[0], getSolution(Y[E[wi][1]]) - u[1]};
+                        double v_norm2 = v[0] * v[0] + v[1] * v[1], w_norm2 = w[0] * w[0] + w[1] * w[1];
+                        double cos = (v[0] * w[0] + v[1] * w[1]) / sqrt(v_norm2 * w_norm2);
+                        if (cos > 1 - EPS) {// the vectors are collinear
+                            // Ensure that they are not collinear (i.e., v.w*cos < |v||w|):
+                        }
+                    }
+            }
+
+            return;
             bool itersect;
             for (int e = 0; e < m; e++)
                 for (int f = e + 1; f < m; f++) {
@@ -81,6 +102,7 @@ void method() {
 
     auto X = new GRBVar[n], Y = new GRBVar[n];// coordinate for each vertex
     GRBVar width, height;                     // dimensions of the drawing
+    auto edge_len = new GRBVar[m];
 
     int M = (int) pow(n, 2);// a huge number
     double time_limit = 180;// 3 min
@@ -113,6 +135,8 @@ void method() {
             X[i] = model.addVar(0.0, M, 0.0, GRB_INTEGER, "x_" + itos(i));
             Y[i] = model.addVar(0.0, M, 0.0, GRB_INTEGER, "y_" + itos(i));
         }
+        for (int e = 0; e < m; e++)
+            edge_len[e] = model.addVar(1.0, sqrt(2 * M * M), 0.0, GRB_CONTINUOUS, "el_" + itos(e));
         model.update();// run update to use model inserted variables
 
         // Constraint creation: ___________________________________________________________________
@@ -129,10 +153,20 @@ void method() {
             for (int v = u + 1; v < n; v++)
                 model.addQConstr((X[u] - X[v]) * (X[u] - X[v]) + (Y[u] - Y[v]) * (Y[u] - Y[v]) >= 1);
 
+        // Relate the coordinates with the edges' length:
+        for (int e = 0; e < m; e++) {
+            int u = E[e][0], v = E[e][1];
+            GRBQuadExpr edge_len2 = (X[u] - X[v]) * (X[u] - X[v]) + (Y[u] - Y[v]) * (Y[u] - Y[v]);
+            model.addQConstr(edge_len[e] * edge_len[e] == edge_len2);
+        }
+
         model.update();// run update before optimize
         model.optimize();
         if (model.get(GRB_IntAttr_SolCount) == 0) throw GRBException("Could not obtain a solution!", -1);
 
+        /*cout << "Edges' length:" << endl;
+        for (int e = 0; e < m; e++)
+            cout << e + 1 << "th edge length - " << edge_len[e].get(GRB_DoubleAttr_X) << endl;*/
         cout << "Points coordinates:" << endl;
         for (int i = 0; i < n; i++)
             cout << i + 1 << "th vtx - (" << (int) X[i].get(GRB_DoubleAttr_X) << "; "
